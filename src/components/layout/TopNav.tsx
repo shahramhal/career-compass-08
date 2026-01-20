@@ -1,4 +1,4 @@
-import { Search, Bell, User } from "lucide-react";
+import { Search, Bell, LogOut, User as UserIcon, Settings as SettingsIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,8 +11,27 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { useAuth } from "@/contexts/AuthContext";
+import { Link } from "react-router-dom";
 
 export function TopNav() {
+  const { user, logout } = useAuth();
+
+  const getInitials = () => {
+    if (!user) return "??";
+    const first = user.firstName?.[0] || "";
+    const last = user.lastName?.[0] || "";
+    return (first + last).toUpperCase() || user.email[0].toUpperCase();
+  };
+
+  const getDisplayName = () => {
+    if (!user) return "User";
+    if (user.firstName && user.lastName) {
+      return `${user.firstName} ${user.lastName}`;
+    }
+    return user.email.split("@")[0];
+  };
+
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-background/80 px-6 backdrop-blur-sm">
       {/* Search */}
@@ -42,25 +61,42 @@ export function TopNav() {
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="flex items-center gap-2 px-2">
               <Avatar className="h-8 w-8">
-                <AvatarImage src="" />
+                <AvatarImage src={user?.profile?.avatarUrl} />
                 <AvatarFallback className="bg-primary text-xs text-primary-foreground">
-                  JD
+                  {getInitials()}
                 </AvatarFallback>
               </Avatar>
               <div className="hidden text-left md:block">
-                <p className="text-sm font-medium">John Doe</p>
-                <p className="text-xs text-muted-foreground">Senior Engineer</p>
+                <p className="text-sm font-medium">{getDisplayName()}</p>
+                <p className="text-xs text-muted-foreground">
+                  {user?.isEmailVerified ? "Verified" : "Unverified"}
+                </p>
               </div>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuLabel>My Account</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>Profile</DropdownMenuItem>
-            <DropdownMenuItem>Career Preferences</DropdownMenuItem>
-            <DropdownMenuItem>Billing</DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link to="/settings" className="flex items-center gap-2 cursor-pointer">
+                <UserIcon className="h-4 w-4" />
+                Profile
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link to="/settings" className="flex items-center gap-2 cursor-pointer">
+                <SettingsIcon className="h-4 w-4" />
+                Settings
+              </Link>
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>Log out</DropdownMenuItem>
+            <DropdownMenuItem 
+              onClick={() => logout()}
+              className="flex items-center gap-2 cursor-pointer text-destructive focus:text-destructive"
+            >
+              <LogOut className="h-4 w-4" />
+              Log out
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

@@ -1,3 +1,4 @@
+import { useState, useCallback, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,49 +12,179 @@ import {
   Lightbulb,
   TrendingUp,
   Zap,
-  Clock
+  Clock,
+  Loader2,
+  Trash2,
+  Star,
+  Download,
+  X
 } from "lucide-react";
-
-const scoreBreakdown = [
-  { name: "Content Quality", score: 85, color: "bg-metric-excellent" },
-  { name: "ATS Compatibility", score: 72, color: "bg-metric-good" },
-  { name: "Keywords Match", score: 68, color: "bg-metric-average" },
-  { name: "Format & Structure", score: 90, color: "bg-metric-excellent" },
-  { name: "Experience Clarity", score: 88, color: "bg-metric-excellent" },
-];
-
-const issues = [
-  {
-    type: "critical",
-    title: "Missing contact email format",
-    description: "Email may be parsed incorrectly by ATS systems",
-    impact: "+12% pass rate",
-    icon: AlertTriangle,
-  },
-  {
-    type: "warning",
-    title: "Generic objective statement",
-    description: "Replace with a tailored professional summary",
-    impact: "+8% engagement",
-    icon: AlertTriangle,
-  },
-  {
-    type: "suggestion",
-    title: "Add quantifiable achievements",
-    description: "Include metrics for your top 3 accomplishments",
-    impact: "+15% interview rate",
-    icon: Lightbulb,
-  },
-];
-
-const missingKeywords = [
-  { keyword: "Docker", frequency: "89%", section: "Experience", impact: "+15%" },
-  { keyword: "Kubernetes", frequency: "76%", section: "Skills", impact: "+12%" },
-  { keyword: "CI/CD", frequency: "82%", section: "Experience", impact: "+10%" },
-  { keyword: "Microservices", frequency: "71%", section: "Experience", impact: "+8%" },
-];
+import { cvService } from "@/services/cvService";
+import type { CV } from "@/types/api";
+import { useToast } from "@/hooks/use-toast";
 
 export default function CVAnalysis() {
+  const [cvs, setCvs] = useState<CV[]>([]);
+  const [selectedCV, setSelectedCV] = useState<CV | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const { toast } = useToast();
+
+  // Fetch CVs on mount
+  useEffect(() => {
+    fetchCVs();
+  }, []);
+
+  const fetchCVs = async () => {
+    try {
+      const data = await cvService.getAllCVs();
+      setCvs(data);
+      const primary = data.find(cv => cv.isPrimary) || data[0];
+      if (primary) setSelectedCV(primary);
+    } catch (error: any) {
+      console.error("Failed to fetch CVs:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFileUpload = async (file: File) => {
+    const validation = cvService.validateFile(file);
+    if (!validation.valid) {
+      toast({
+        title: "Invalid file",
+        description: validation.error,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setUploading(true);
+    setUploadProgress(0);
+
+    try {
+      const newCV = await cvService.uploadCV(file, setUploadProgress);
+      setCvs(prev => [newCV, ...prev]);
+      setSelectedCV(newCV);
+      toast({
+        title: "CV uploaded successfully",
+        description: `${file.name} has been analyzed.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Upload failed",
+        description: error.message || "Failed to upload CV",
+        variant: "destructive",
+      });
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
+    }
+  };
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileUpload(file);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  }, []);
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFileUpload(file);
+    e.target.value = "";
+  };
+
+  const handleSetPrimary = async (cvId: string) => {
+    try {
+      await cvService.setPrimaryCV(cvId);
+      setCvs(prev => prev.map(cv => ({ ...cv, isPrimary: cv.id === cvId })));
+      toast({ title: "Primary CV updated" });
+    } catch (error: any) {
+      toast({
+        title: "Failed to set primary CV",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteCV = async (cvId: string) => {
+    try {
+      await cvService.deleteCV(cvId);
+      setCvs(prev => prev.filter(cv => cv.id !== cvId));
+      if (selectedCV?.id === cvId) {
+        setSelectedCV(cvs.find(cv => cv.id !== cvId) || null);
+      }
+      toast({ title: "CV deleted" });
+    } catch (error: any) {
+      toast({
+        title: "Failed to delete CV",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDownloadCV = async (cv: CV) => {
+    try {
+      const blob = await cvService.downloadCV(cv.id);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = cv.filename;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (error: any) {
+      toast({
+        title: "Download failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const getScoreColor = (score: number) => {
+    if (score >= 80) return "text-metric-excellent";
+    if (score >= 60) return "text-metric-good";
+    if (score >= 40) return "text-metric-average";
+    return "text-metric-poor";
+  };
+
+  const getScoreBreakdown = (cv: CV) => {
+    const analysis = cv.analysisData;
+    if (!analysis) return [];
+    
+    // Generate mock breakdown based on ATS score
+    const atsScore = analysis.atsScore || 70;
+    return [
+      { name: "ATS Compatibility", score: atsScore, color: "bg-primary" },
+      { name: "Content Quality", score: Math.min(100, atsScore + 10), color: "bg-primary" },
+      { name: "Keywords Match", score: Math.max(0, atsScore - 5), color: "bg-primary" },
+      { name: "Format & Structure", score: Math.min(100, atsScore + 5), color: "bg-primary" },
+    ];
+  };
+
+  if (loading) {
+    return (
+      <div className="flex h-96 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -64,250 +195,397 @@ export default function CVAnalysis() {
             Optimize your CV for maximum impact with AI-powered analysis
           </p>
         </div>
-        <Button>
-          <Upload className="mr-2 h-4 w-4" />
-          Upload New CV
-        </Button>
+        <div className="relative">
+          <input
+            type="file"
+            accept=".pdf,.docx"
+            onChange={handleFileInput}
+            className="hidden"
+            id="cv-upload"
+            disabled={uploading}
+          />
+          <Button asChild disabled={uploading}>
+            <label htmlFor="cv-upload" className="cursor-pointer">
+              {uploading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Uploading {uploadProgress}%
+                </>
+              ) : (
+                <>
+                  <Upload className="mr-2 h-4 w-4" />
+                  Upload New CV
+                </>
+              )}
+            </label>
+          </Button>
+        </div>
       </div>
 
-      {/* Current CV Card */}
-      <Card className="border-border bg-card shadow-card">
-        <CardContent className="p-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
-                <FileText className="h-6 w-6 text-primary" />
-              </div>
-              <div>
-                <h3 className="font-medium text-foreground">John_Doe_Resume_2024.pdf</h3>
-                <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
-                  <span>Uploaded Jan 10, 2024</span>
-                  <span>•</span>
-                  <span>2 pages</span>
-                  <span>•</span>
-                  <Badge variant="secondary" className="text-xs">Latest Version</Badge>
-                </div>
-              </div>
+      {/* Upload Drop Zone */}
+      {cvs.length === 0 && (
+        <Card
+          className={`border-2 border-dashed transition-colors ${
+            isDragging ? "border-primary bg-primary/5" : "border-border"
+          }`}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+        >
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
+              <Upload className="h-8 w-8 text-primary" />
             </div>
-            <div className="text-right">
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-3xl font-bold text-metric-good">78</span>
-                <span className="text-sm text-muted-foreground">/100</span>
-              </div>
-              <p className="mt-1 flex items-center gap-1 text-xs text-metric-excellent">
-                <TrendingUp className="h-3 w-3" />
-                +6 since last update
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+            <h3 className="mt-4 text-lg font-medium text-foreground">
+              Upload your CV
+            </h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Drag and drop a PDF or DOCX file, or click to browse
+            </p>
+            <Badge variant="secondary" className="mt-4">
+              PDF, DOCX up to 10MB
+            </Badge>
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Analysis Tabs */}
-      <Tabs defaultValue="overview" className="space-y-6">
-        <TabsList className="bg-muted/50">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="ats">ATS Compatibility</TabsTrigger>
-          <TabsTrigger value="keywords">Keywords</TabsTrigger>
-          <TabsTrigger value="recommendations">Recommendations</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="space-y-6">
-          <div className="grid gap-6 lg:grid-cols-2">
-            {/* Score Breakdown */}
+      {/* CV List */}
+      {cvs.length > 0 && (
+        <div className="grid gap-4 lg:grid-cols-3">
+          <div className="lg:col-span-1">
             <Card className="border-border bg-card shadow-card">
-              <CardHeader>
+              <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Score Breakdown
+                  Your CVs
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                {scoreBreakdown.map((item) => (
-                  <div key={item.name} className="space-y-2">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">{item.name}</span>
-                      <span className="font-mono font-medium text-foreground">
-                        {item.score}/100
-                      </span>
-                    </div>
-                    <Progress value={item.score} className="h-2" />
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-
-            {/* Quick Issues */}
-            <Card className="border-border bg-card shadow-card">
-              <CardHeader>
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Priority Issues
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {issues.map((issue, index) => (
+              <CardContent className="space-y-2">
+                {cvs.map((cv) => (
                   <div
-                    key={index}
-                    className="flex items-start gap-3 rounded-lg border border-border p-3"
+                    key={cv.id}
+                    onClick={() => setSelectedCV(cv)}
+                    className={`flex items-center gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
+                      selectedCV?.id === cv.id
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:border-primary/30"
+                    }`}
                   >
-                    <div
-                      className={`rounded-lg p-2 ${
-                        issue.type === "critical"
-                          ? "bg-metric-poor/10"
-                          : issue.type === "warning"
-                          ? "bg-metric-average/10"
-                          : "bg-primary/10"
-                      }`}
-                    >
-                      <issue.icon
-                        className={`h-4 w-4 ${
-                          issue.type === "critical"
-                            ? "text-metric-poor"
-                            : issue.type === "warning"
-                            ? "text-metric-average"
-                            : "text-primary"
-                        }`}
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-foreground">
-                        {issue.title}
+                    <FileText className="h-5 w-5 text-primary" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate">
+                        {cv.filename}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {issue.description}
+                        {new Date(cv.createdAt).toLocaleDateString()}
                       </p>
                     </div>
-                    <Badge variant="outline" className="text-xs text-metric-excellent">
-                      {issue.impact}
-                    </Badge>
+                    <div className="flex items-center gap-1">
+                      {cv.isPrimary && (
+                        <Star className="h-4 w-4 text-primary fill-primary" />
+                      )}
+                      {cv.analysisData?.atsScore && (
+                        <span className={`text-sm font-mono font-bold ${getScoreColor(cv.analysisData.atsScore)}`}>
+                          {cv.analysisData.atsScore}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 ))}
               </CardContent>
             </Card>
           </div>
-        </TabsContent>
 
-        <TabsContent value="ats" className="space-y-6">
-          <Card className="border-border bg-card shadow-card">
-            <CardHeader>
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                ATS Compatibility Analysis
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="flex items-center gap-3 rounded-lg bg-metric-excellent/10 p-4">
-                  <CheckCircle className="h-5 w-5 text-metric-excellent" />
-                  <div>
-                    <p className="font-medium text-foreground">File format is ATS-friendly</p>
-                    <p className="text-sm text-muted-foreground">PDF with selectable text detected</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 rounded-lg bg-metric-average/10 p-4">
-                  <AlertTriangle className="h-5 w-5 text-metric-average" />
-                  <div>
-                    <p className="font-medium text-foreground">Complex formatting detected</p>
-                    <p className="text-sm text-muted-foreground">Tables and columns may cause parsing issues</p>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="keywords" className="space-y-6">
-          <Card className="border-border bg-card shadow-card">
-            <CardHeader>
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Missing Keywords for Target Role
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                      <th className="pb-3 font-medium">Keyword</th>
-                      <th className="pb-3 font-medium">Job Frequency</th>
-                      <th className="pb-3 font-medium">Add to Section</th>
-                      <th className="pb-3 font-medium">Impact</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {missingKeywords.map((item) => (
-                      <tr key={item.keyword} className="border-b border-border last:border-0">
-                        <td className="py-3">
-                          <Badge variant="outline" className="font-mono">
-                            {item.keyword}
-                          </Badge>
-                        </td>
-                        <td className="py-3 font-mono text-sm text-foreground">
-                          {item.frequency}
-                        </td>
-                        <td className="py-3 text-sm text-muted-foreground">
-                          {item.section}
-                        </td>
-                        <td className="py-3">
-                          <Badge className="bg-metric-excellent/10 text-metric-excellent border-0">
-                            {item.impact}
-                          </Badge>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="recommendations" className="space-y-6">
-          <Card className="border-border bg-card shadow-card">
-            <CardHeader>
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Prioritized Recommendations
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {[1, 2, 3].map((i) => (
-                <div
-                  key={i}
-                  className="flex items-start gap-4 rounded-lg border border-border p-4 hover:border-primary/30 transition-colors"
-                >
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 font-mono text-sm font-bold text-primary">
-                    {i}
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <h4 className="font-medium text-foreground">
-                        Add quantifiable achievements to Experience section
-                      </h4>
-                      <Badge className="bg-metric-poor/10 text-metric-poor border-0 text-xs">
-                        High Impact
-                      </Badge>
+          {/* Selected CV Details */}
+          <div className="lg:col-span-2">
+            {selectedCV && (
+              <>
+                {/* Current CV Card */}
+                <Card className="border-border bg-card shadow-card mb-6">
+                  <CardContent className="p-6">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
+                          <FileText className="h-6 w-6 text-primary" />
+                        </div>
+                        <div>
+                          <h3 className="font-medium text-foreground">{selectedCV.filename}</h3>
+                          <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
+                            <span>Uploaded {new Date(selectedCV.createdAt).toLocaleDateString()}</span>
+                            <span>•</span>
+                            {selectedCV.isPrimary ? (
+                              <Badge variant="secondary" className="text-xs">Primary CV</Badge>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 px-2 text-xs"
+                                onClick={() => handleSetPrimary(selectedCV.id)}
+                              >
+                                Set as Primary
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-right mr-4">
+                          <div className="flex items-center gap-2">
+                            <span className={`font-mono text-3xl font-bold ${getScoreColor(selectedCV.analysisData?.atsScore || 0)}`}>
+                              {selectedCV.analysisData?.atsScore || "N/A"}
+                            </span>
+                            {selectedCV.analysisData?.atsScore && (
+                              <span className="text-sm text-muted-foreground">/100</span>
+                            )}
+                          </div>
+                          <p className="mt-1 flex items-center gap-1 text-xs text-metric-excellent">
+                            <TrendingUp className="h-3 w-3" />
+                            ATS Score
+                          </p>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => handleDownloadCV(selectedCV)}
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => handleDeleteCV(selectedCV.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Replace generic descriptions with specific metrics. Example: "Improved page load time by 40%"
-                    </p>
-                    <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        ~15 min to implement
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Zap className="h-3 w-3" />
-                        +12% interview rate
-                      </span>
+                  </CardContent>
+                </Card>
+
+                {/* Analysis Tabs */}
+                <Tabs defaultValue="overview" className="space-y-6">
+                  <TabsList className="bg-muted/50">
+                    <TabsTrigger value="overview">Overview</TabsTrigger>
+                    <TabsTrigger value="parsed">Parsed Data</TabsTrigger>
+                    <TabsTrigger value="recommendations">Recommendations</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="overview" className="space-y-6">
+                    <div className="grid gap-6 lg:grid-cols-2">
+                      {/* Score Breakdown */}
+                      <Card className="border-border bg-card shadow-card">
+                        <CardHeader>
+                          <CardTitle className="text-sm font-medium text-muted-foreground">
+                            Score Breakdown
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          {getScoreBreakdown(selectedCV).map((item) => (
+                            <div key={item.name} className="space-y-2">
+                              <div className="flex items-center justify-between text-sm">
+                                <span className="text-muted-foreground">{item.name}</span>
+                                <span className="font-mono font-medium text-foreground">
+                                  {item.score}/100
+                                </span>
+                              </div>
+                              <Progress value={item.score} className="h-2" />
+                            </div>
+                          ))}
+                        </CardContent>
+                      </Card>
+
+                      {/* Skills Extracted */}
+                      <Card className="border-border bg-card shadow-card">
+                        <CardHeader>
+                          <CardTitle className="text-sm font-medium text-muted-foreground">
+                            Skills Detected
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="flex flex-wrap gap-2">
+                            {selectedCV.parsedData?.skills?.map((skill, i) => (
+                              <Badge key={i} variant="secondary">
+                                {skill}
+                              </Badge>
+                            )) || (
+                              <p className="text-sm text-muted-foreground">No skills detected</p>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
                     </div>
-                  </div>
-                  <Button size="sm" variant="outline">
-                    Apply
-                  </Button>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+
+                    {/* Keywords Analysis */}
+                    {selectedCV.analysisData && (
+                      <Card className="border-border bg-card shadow-card">
+                        <CardHeader>
+                          <CardTitle className="text-sm font-medium text-muted-foreground">
+                            Keyword Analysis
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="grid gap-4 md:grid-cols-2">
+                            <div>
+                              <h4 className="text-sm font-medium text-foreground mb-2 flex items-center gap-2">
+                                <CheckCircle className="h-4 w-4 text-metric-excellent" />
+                                Matched Keywords
+                              </h4>
+                              <div className="flex flex-wrap gap-2">
+                                {selectedCV.analysisData.keywordMatches?.map((kw, i) => (
+                                  <Badge key={i} className="bg-metric-excellent/10 text-metric-excellent border-0">
+                                    {kw}
+                                  </Badge>
+                                )) || <span className="text-sm text-muted-foreground">None</span>}
+                              </div>
+                            </div>
+                            <div>
+                              <h4 className="text-sm font-medium text-foreground mb-2 flex items-center gap-2">
+                                <AlertTriangle className="h-4 w-4 text-metric-average" />
+                                Missing Keywords
+                              </h4>
+                              <div className="flex flex-wrap gap-2">
+                                {selectedCV.analysisData.missingKeywords?.map((kw, i) => (
+                                  <Badge key={i} variant="outline" className="text-metric-average border-metric-average/30">
+                                    {kw}
+                                  </Badge>
+                                )) || <span className="text-sm text-muted-foreground">None</span>}
+                              </div>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="parsed" className="space-y-6">
+                    {selectedCV.parsedData ? (
+                      <>
+                        {/* Personal Info */}
+                        {selectedCV.parsedData.personal && (
+                          <Card className="border-border bg-card shadow-card">
+                            <CardHeader>
+                              <CardTitle className="text-sm font-medium text-muted-foreground">
+                                Personal Information
+                              </CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <dl className="grid gap-3 md:grid-cols-2">
+                                {Object.entries(selectedCV.parsedData.personal).map(([key, value]) => (
+                                  value && (
+                                    <div key={key}>
+                                      <dt className="text-xs text-muted-foreground capitalize">{key}</dt>
+                                      <dd className="text-sm text-foreground">{value}</dd>
+                                    </div>
+                                  )
+                                ))}
+                              </dl>
+                            </CardContent>
+                          </Card>
+                        )}
+
+                        {/* Experience */}
+                        {selectedCV.parsedData.experience && selectedCV.parsedData.experience.length > 0 && (
+                          <Card className="border-border bg-card shadow-card">
+                            <CardHeader>
+                              <CardTitle className="text-sm font-medium text-muted-foreground">
+                                Experience
+                              </CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                              {selectedCV.parsedData.experience.map((exp, i) => (
+                                <div key={i} className="border-l-2 border-primary/30 pl-4">
+                                  <h4 className="font-medium text-foreground">{exp.title}</h4>
+                                  <p className="text-sm text-primary">{exp.company}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {exp.startDate} - {exp.current ? "Present" : exp.endDate}
+                                    {exp.location && ` · ${exp.location}`}
+                                  </p>
+                                  {exp.responsibilities && (
+                                    <ul className="mt-2 text-sm text-muted-foreground list-disc list-inside">
+                                      {exp.responsibilities.slice(0, 3).map((r, j) => (
+                                        <li key={j}>{r}</li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </div>
+                              ))}
+                            </CardContent>
+                          </Card>
+                        )}
+
+                        {/* Education */}
+                        {selectedCV.parsedData.education && selectedCV.parsedData.education.length > 0 && (
+                          <Card className="border-border bg-card shadow-card">
+                            <CardHeader>
+                              <CardTitle className="text-sm font-medium text-muted-foreground">
+                                Education
+                              </CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                              {selectedCV.parsedData.education.map((edu, i) => (
+                                <div key={i} className="border-l-2 border-primary/30 pl-4">
+                                  <h4 className="font-medium text-foreground">{edu.degree} {edu.field && `in ${edu.field}`}</h4>
+                                  <p className="text-sm text-primary">{edu.institution}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {edu.startDate} - {edu.endDate}
+                                  </p>
+                                </div>
+                              ))}
+                            </CardContent>
+                          </Card>
+                        )}
+                      </>
+                    ) : (
+                      <Card className="border-border bg-card shadow-card">
+                        <CardContent className="py-12 text-center">
+                          <p className="text-muted-foreground">No parsed data available for this CV</p>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="recommendations" className="space-y-6">
+                    <Card className="border-border bg-card shadow-card">
+                      <CardHeader>
+                        <CardTitle className="text-sm font-medium text-muted-foreground">
+                          AI Recommendations
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        {selectedCV.analysisData?.recommendations?.length ? (
+                          selectedCV.analysisData.recommendations.map((rec, i) => (
+                            <div
+                              key={i}
+                              className="flex items-start gap-4 rounded-lg border border-border p-4 hover:border-primary/30 transition-colors"
+                            >
+                              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 font-mono text-sm font-bold text-primary">
+                                {i + 1}
+                              </div>
+                              <div className="flex-1">
+                                <p className="text-sm text-foreground">{rec}</p>
+                                <div className="mt-2 flex items-center gap-4 text-xs text-muted-foreground">
+                                  <span className="flex items-center gap-1">
+                                    <Zap className="h-3 w-3" />
+                                    Improves ATS score
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-center text-muted-foreground py-8">
+                            No recommendations available. Upload a CV to get AI-powered insights.
+                          </p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </TabsContent>
+                </Tabs>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
